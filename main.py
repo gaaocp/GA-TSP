@@ -4,54 +4,78 @@
 # GA-TSP
 # Genetic Algorithm (GA) for the Traveling Salesman Problem (TSP)
 # Author: Guglielmo Cimolai
-# Date: 22/05/2025
+# Date: 23/05/2025
 
 import random
 import copy
-import math  # For math.sqrt
+import numpy as np
+import time
 
-# 1) Helpers for city and distance calculation
+# 1) Main configuration
+# City map grid
+DEFAULT_WIDTH = 100
+DEFAULT_HEIGHT = 100
+# SGA default parameters (play with them to improve convergence!)
+DEFAULT_SGA_POP_SIZE = 100 # Population size
+DEFAULT_SGA_GENERATIONS = 1000 # Number of generations
+DEFAULT_SGA_CROSSOVER_RATE = 0.85 # Crossover rate
+DEFAULT_SGA_MUTATION_RATE = 0.15 # Mutation rate
+DEFAULT_SGA_ELITISM_SIZE = 5 # Elitism size
+DEFAULT_SGA_TOURNAMENT_K = 3 # Tournament size
+
+# 2) Helpers for city generation and distance calculation
+def generate_cities(num_cities, width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, seed=None):
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+    # Generate random cities (n = num_cities) in given space
+    cities = []
+    for _ in range(num_cities):
+        x = random.randint(0, width)
+        y = random.randint(0, height)
+        cities.append((x, y))
+    return np.array(cities)
+
 def euclidean_distance(city1, city2):
     # Compute Euclidean distance between any two cities
-    return math.sqrt((city1[0]-city2[0])**2 + (city1[1]-city2[1])**2)
+    return np.sqrt((city1[0]-city2[0])**2 + (city1[1]-city2[1])**2)
 
 def calculate_distance_matrix(cities):
     num_cities = len(cities)
-    # Initialize distance matrix with zeros using nested lists
-    dist_matrix = [[0.0 for _ in range(num_cities)] for _ in range(num_cities)]
+    # Initialize distance matrix
+    dist_matrix = np.zeros((num_cities, num_cities))
     for i in range(num_cities):
         for j in range(i+1, num_cities):
             dist = euclidean_distance(cities[i], cities[j])
-            dist_matrix[i][j] = dist
-            dist_matrix[j][i] = dist
+            dist_matrix[i, j] = dist_matrix[j, i] = dist
     return dist_matrix
 
-# 2) GA core components
+# 3) GA core components
 def calculate_tour_cost(tour, distance_matrix):
     # Calculate total cost (= total path distance) for a full tour
     cost = 0.0
     num_cities = len(tour)
     for i in range(num_cities):
-        cost += distance_matrix[tour[i]][tour[(i+1) % num_cities]]  # Accessing nested list
+        cost += distance_matrix[tour[i], tour[(i+1) % num_cities]]
     return cost
 
 class Individual:
     def __init__(self, tour):
-        self.tour = list(tour)  # Ensure it's a list and a copy
+        self.tour = list(tour)
         self.cost = float('inf')
 
     def calculate_cost(self, distance_matrix):
         self.cost = calculate_tour_cost(self.tour, distance_matrix)
         return self.cost
 
-    def __lt__(self, other):  # For sorting by cost
+    def __lt__(self, other):
         return self.cost < other.cost
 
     def __repr__(self):
-        # Simplified representation for console
-        return f"Cost: {self.cost:.2f}, Tour: {self.tour}"
+        tour_str = str(self.tour) if len(self.tour) < 15 else str(self.tour[:7] + ["..."] + self.tour[-7:])
+        return f"Tour: {tour_str} Cost: {self.cost:.2f}"
 
-# 3) Standard GA implementation (Selection-Crossover-Mutation loop)
+# 4) Standard GA implementation (Selection-Crossover-Mutation loop)
 def sga_initialize_population(num_cities, population_size):
     # Initialize population for the current generation
     population = []
@@ -61,10 +85,10 @@ def sga_initialize_population(num_cities, population_size):
         population.append(Individual(tour))
     return population
 
-def sga_selection_tournament(population, k):  # k is tournament size
-    # Define simple selection operator
+def sga_selection_tournament(population, k=DEFAULT_SGA_TOURNAMENT_K):
+    # Define simple selection operator (k is tournament size)
     selected_parents = []
-    for _ in range(len(population)):  # Create a mating pool of the same size as population
+    for _ in range(len(population)): # Create a mating pool of the same size as population
         aspirants = random.sample(population, k)
         selected_parents.append(min(aspirants, key=lambda ind: ind.cost))
     return selected_parents
@@ -94,8 +118,12 @@ def sga_mutate_swap(individual, mutation_prob_per_individual):
         tour[idx1], tour[idx2] = tour[idx2], tour[idx1]
 
 def solve_tsp_sga(cities, distance_matrix,
-                  population_size, generations,
-                  crossover_rate, mutation_rate, tournament_k):
+                  population_size=DEFAULT_SGA_POP_SIZE,
+                  generations=DEFAULT_SGA_GENERATIONS,
+                  crossover_rate=DEFAULT_SGA_CROSSOVER_RATE,
+                  mutation_rate=DEFAULT_SGA_MUTATION_RATE,
+                  elitism_size=DEFAULT_SGA_ELITISM_SIZE,
+                  tournament_k=DEFAULT_SGA_TOURNAMENT_K):
     num_cities = len(cities)
     population = sga_initialize_population(num_cities, population_size)
     for ind in population:
@@ -104,14 +132,14 @@ def solve_tsp_sga(cities, distance_matrix,
     population.sort()
     best_overall_individual = copy.deepcopy(population[0])
 
-    print(f"\nRunning SGA for {num_cities} cities")
-    print(f"Parameters: Pop_Size={population_size}, Gens={generations}, "
-          f"CR={crossover_rate}, MR={mutation_rate}, Tourn_K={tournament_k}")
-    print(f"Initial best: {best_overall_individual}")
+    print(f"\n--- Running SGA for {num_cities} cities ---")
+    print(f"Initial best cost: {best_overall_individual.cost:.2f}")
 
-    for gen in range(1, generations + 1):
+    for gen in range(1, generations+1):
         new_population = []
-        # No elitism: new population is entirely offspring
+        if elitism_size > 0:
+            new_population.extend(copy.deepcopy(population[:elitism_size]))
+
         mating_pool = sga_selection_tournament(population, tournament_k)
         offspring_idx = 0
         while len(new_population) < population_size:
@@ -119,9 +147,10 @@ def solve_tsp_sga(cities, distance_matrix,
             offspring_idx += 1
             parent2 = mating_pool[offspring_idx % len(mating_pool)]
             offspring_idx += 1
+
             if random.random() < crossover_rate:
                 child = sga_crossover_ordered(parent1, parent2)
-            else:  # If no crossover, clone one parent
+            else:
                 child = copy.deepcopy(random.choice([parent1, parent2]))
 
             sga_mutate_swap(child, mutation_rate)
@@ -134,47 +163,46 @@ def solve_tsp_sga(cities, distance_matrix,
         if population[0].cost < best_overall_individual.cost:
             best_overall_individual = copy.deepcopy(population[0])
 
-        # Optional: minimal progress print
-        # if gen%(generations//5) == 0 and generations >= 5: # Print ~5 updates
-        #     print(f"Gen {gen}, Best: {best_overall_individual.cost:.2f}")
+        # Console output for progress
+        if gen % 10 == 0 or gen == generations:  # Print every 10 generations and the last one
+            print(f"SGA Gen {gen}/{generations} - Best Cost: {best_overall_individual.cost:.2f}")
 
-    print(f"SGA Final best: {best_overall_individual}")
+    print(f"SGA Final Best Tour: {best_overall_individual.tour} with Cost: {best_overall_individual.cost:.2f}")
     return best_overall_individual
 
-# 4) Main execution
+# 5) Main execution
 if __name__ == "__main__":
-    # Fixed small set of cities for simplicity and deterministic testing
-    # Each city is defined by (x, y) coordinates in 2D plane
-    fixed_cities = [
-        (60, 200), (180, 200), (80, 180), (140, 180), (20, 160),
-        (100, 160), (200, 160), (140, 140), (40, 120), (100, 120) # 10 cities
-    ]
-    num_cities_run = len(fixed_cities)
+    NUM_CITIES = 50 # Try different numbers of cities
+    CITY_SEED = 1 # Seed for city positions reproducibility
 
-    # Configure GA parameters
-    POP_SIZE = 50
-    GENERATIONS = 100 # To be adjusted based on num_cities_run if needed
-    CROSSOVER_RATE = 0.85
-    MUTATION_RATE = 0.15
-    TOURNAMENT_K = 3
+    # GA parameter tuning (can be adjusted based on NUM_CITIES)
+    SGA_PARAMS = {
+        "population_size": DEFAULT_SGA_POP_SIZE, "generations": DEFAULT_SGA_GENERATIONS,
+        "crossover_rate": DEFAULT_SGA_CROSSOVER_RATE, "mutation_rate": DEFAULT_SGA_MUTATION_RATE,
+        "elitism_size": DEFAULT_SGA_ELITISM_SIZE, "tournament_k": DEFAULT_SGA_TOURNAMENT_K
+    }
 
     # Setup problem
-    distance_mat = calculate_distance_matrix(fixed_cities)
-    print(f"Problem: {num_cities_run} fixed cities. Distance matrix calculated.")
+    cities_coords = generate_cities(NUM_CITIES, seed=CITY_SEED)
+    distance_mat = calculate_distance_matrix(cities_coords)
+
+    print(f"Generated {NUM_CITIES} cities. Distance matrix calculated.")
 
     # Solve with Standard GA
+    print(f"\nSGA Parameters: {SGA_PARAMS}")
+    start_time_sga = time.time()
     sga_best_individual = solve_tsp_sga(
-        fixed_cities, distance_mat,
-        population_size=POP_SIZE,
-        generations=GENERATIONS,
-        crossover_rate=CROSSOVER_RATE,
-        mutation_rate=MUTATION_RATE,
-        tournament_k=TOURNAMENT_K
+        cities_coords, distance_mat, **SGA_PARAMS
     )
+    end_time_sga = time.time()
+    sga_exec_time = end_time_sga - start_time_sga
 
     # Final results output
-    print("\n" + "="*10 + " SGA Run Complete " + "="*10)
-    print(f"Final Best Individual found:")
-    print(f"  Cost: {sga_best_individual.cost:.2f}")
-    print(f"  Tour: {sga_best_individual.tour}")
-    print("Execution finished.")
+    print("\n" + "="*10 + " Final Results " + "="*10)
+    print(f"Problem: {NUM_CITIES} cities (Seed: {CITY_SEED})")
+    print(f"\nStandard GA (SGA):")
+    print(f"  Best Cost: {sga_best_individual.cost:.2f}")
+    print(f"  Best Tour: {sga_best_individual.tour}")  # Printing the full tour
+    print(f"  Execution Time: {sga_exec_time:.2f}s")
+
+    print("\nSGA execution finished.")
